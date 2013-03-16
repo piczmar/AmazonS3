@@ -1,0 +1,251 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09", 
+  "Description": "AWS RLab - Part 1: Media Uploads.", 
+  "Mappings": {
+    "AWSInstanceType2Arch": {
+      "c1.medium": {
+        "Arch": "64"
+      }, 
+      "c1.xlarge": {
+        "Arch": "64"
+      }, 
+      "m1.large": {
+        "Arch": "64"
+      }, 
+      "m1.medium": {
+        "Arch": "64"
+      }, 
+      "m1.small": {
+        "Arch": "64"
+      }, 
+      "t1.micro": {
+        "Arch": "64"
+      }
+    }, 
+    "AWSRegionArch2AMI": {
+      "us-east-1": {
+        "32": "ami-38f47351", 
+        "64": "ami-38f47351"
+      }
+    }
+  }, 
+  "Outputs": {
+    "URL": {
+      "Description": "URL of the website", 
+      "Value": {
+        "Fn::Join": [
+          "", 
+          [
+            "http://", 
+            {
+              "Fn::GetAtt": [
+                "ElasticLoadBalancer", 
+                "DNSName"
+              ]
+            }
+          ]
+        ]
+      }
+    }
+  }, 
+  "Parameters": {
+    "DynamoDBTableName": {
+      "Description": "DynamoDB Table name. (note: it must already exist.)", 
+      "Type": "String"
+    }, 
+    "InstanceType": {
+      "AllowedValues": [
+        "t1.micro", 
+        "c1.medium", 
+        "c1.xlarge", 
+        "m1.small", 
+        "m1.medium", 
+        "m1.large"
+      ], 
+      "ConstraintDescription": "must be a valid EC2 instance type.", 
+      "Default": "m1.small", 
+      "Description": "WebServer EC2 instance type", 
+      "Type": "String"
+    }, 
+    "KeyName": {
+      "Default": "generic-qwiklab", 
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instances", 
+      "Type": "String"
+    }, 
+    "S3BucketName": {
+      "Description": "S3 Bucket name. (note: it must already exist.)", 
+      "Type": "String"
+    }
+  }, 
+  "Resources": {
+    "ElasticLoadBalancer": {
+      "Properties": {
+        "AvailabilityZones": {
+          "Fn::GetAZs": ""
+        }, 
+        "HealthCheck": {
+          "HealthyThreshold": "3", 
+          "Interval": "30", 
+          "Target": {
+            "Fn::Join": [
+              "", 
+              [
+                "HTTP:", 
+                "80", 
+                "/"
+              ]
+            ]
+          }, 
+          "Timeout": "5", 
+          "UnhealthyThreshold": "5"
+        }, 
+        "Listeners": [
+          {
+            "InstancePort": "80", 
+            "LoadBalancerPort": "80", 
+            "Protocol": "HTTP"
+          }
+        ]
+      }, 
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer"
+    }, 
+    "InstanceSecurityGroup": {
+      "Properties": {
+        "GroupDescription": "Enable SSH access and HTTP access on the configured port", 
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "0.0.0.0/0", 
+            "FromPort": "22", 
+            "IpProtocol": "tcp", 
+            "ToPort": "22"
+          }, 
+          {
+            "CidrIp": "0.0.0.0/0", 
+            "FromPort": "80", 
+            "IpProtocol": "tcp", 
+            "ToPort": "80"
+          }
+        ]
+      }, 
+      "Type": "AWS::EC2::SecurityGroup"
+    }, 
+    "LaunchConfig": {
+      "Properties": {
+        "IamInstanceProfile": {
+          "Ref": "RootInstanceProfile"
+        }, 
+        "ImageId": {
+          "Fn::FindInMap": [
+            "AWSRegionArch2AMI", 
+            {
+              "Ref": "AWS::Region"
+            }, 
+            {
+              "Fn::FindInMap": [
+                "AWSInstanceType2Arch", 
+                {
+                  "Ref": "InstanceType"
+                }, 
+                "Arch"
+              ]
+            }
+          ]
+        }, 
+        "InstanceType": {
+          "Ref": "InstanceType"
+        }, 
+        "KeyName": {
+          "Ref": "KeyName"
+        }, 
+        "SecurityGroups": [
+          {
+            "Ref": "InstanceSecurityGroup"
+          }
+        ], 
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "", 
+              [
+                "{\"bucket\" : \"", 
+                {
+                  "Ref": "S3BucketName"
+                }, 
+                "\", \"table\" : \"", 
+                {
+                  "Ref": "DynamoDBTableName"
+                }, 
+                "\" }"
+              ]
+            ]
+          }
+        }
+      }, 
+      "Type": "AWS::AutoScaling::LaunchConfiguration"
+    }, 
+    "RootInstanceProfile": {
+      "Properties": {
+        "Path": "/", 
+        "Roles": [
+          {
+            "Ref": "RootRole"
+          }
+        ]
+      }, 
+      "Type": "AWS::IAM::InstanceProfile"
+    }, 
+    "RootRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ], 
+              "Effect": "Allow", 
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com"
+                ]
+              }
+            }
+          ]
+        }, 
+        "Path": "/", 
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": "*", 
+                  "Effect": "Allow", 
+                  "Resource": "*"
+                }
+              ]
+            }, 
+            "PolicyName": "root"
+          }
+        ]
+      }, 
+      "Type": "AWS::IAM::Role"
+    }, 
+    "WebServerGroup": {
+      "Properties": {
+        "AvailabilityZones": {
+          "Fn::GetAZs": ""
+        }, 
+        "LaunchConfigurationName": {
+          "Ref": "LaunchConfig"
+        }, 
+        "LoadBalancerNames": [
+          {
+            "Ref": "ElasticLoadBalancer"
+          }
+        ], 
+        "MaxSize": "1", 
+        "MinSize": "1"
+      }, 
+      "Type": "AWS::AutoScaling::AutoScalingGroup"
+    }
+  }
+}
